@@ -41,10 +41,67 @@ EVAL_WORKSHEET = "발표 채점 및 관찰기록표 V4"
 REFLECTION_WORKSHEET = "학생소감"
 
 # ---------------------------------------------------------
+# 이미지 기반 루브릭(채점 기준) 데이터 정의
+# ---------------------------------------------------------
+RUBRIC_DATA = {
+    '맥락/구성': [
+        (10, "청중과 상황 맥락을 잘 이해하고 내용을 구성함(5점) / 활동지 1~5관 및 음악/메시지가 매우 구체적이고 진정성 있게 완성됨(5점)"),
+        (6, "맥락 이해가 다소 부족하거나 일부 활동지 내용이 추상적임(3점) / 활동지 1~5관 및 음악/메시지의 구체성, 진정성이 다소 미흡함(3점)"),
+        (4, "맥락 이해가 거의 나타나지 않음(2점) / 활동지 작성 항목이 5회 이상 누락되거나 내용이 단순함(2점)")
+    ],
+    '매체활용': [
+        (10, "내용에 적합하고 맥락을 고려한 시청각 자료를 활용하였음."),
+        (5, "내용에 적합하나 맥락 고려가 미흡함. 또는 유기성이 떨어지는 시청각 자료를 활용함.")
+    ],
+    '전달력': [
+        (20, "교실 전체에 명확히 전달되는 성량과 알맞은 속도, 완급 조절로 전달력이 매우 뛰어남."),
+        (15, "목소리 크기와 말하는 속도가 적절하여 발표 내용을 듣는 데 무리가 없음."),
+        (10, "목소리가 다소 작거나 속도가 약간 빠르고 눌려 전달력이 일부 떨어짐."),
+        (5, "목소리가 거의 들리지 않거나 기어 들어가는 발음으로 소통이 불가능함.")
+    ],
+    '반/비언어': [
+        (10, "슬라이드 전환과 어우러지는 자연스러운 손짓, 바른 자세, 시선을 사용함."),
+        (8, "발표 자세가 바르고 내용에 어울리는 적절한 시선과 동작을 사용함."),
+        (6, "자세는 바르나 비언어적 표현이 다소 어색하거나 대본, PPT 화면을 자주 바라봄."),
+        (4, "불필요한 동작을 반복하거나 불안정한 자세로 발표에 집중하기 어려움.")
+    ],
+    '내용숙지': [
+        (20, "원고나 PPT 화면에 의존하지 않고 내용을 완전히 숙지하여 청중과 눈을 맞추며 유연하게 발표함."),
+        (15, "내용 숙지가 다소 부족하여 원고나 PPT 화면을 대본처럼 자주 읽음. 청중과 눈맞춤이 적음."),
+        (10, "내용 숙지가 미흡하여 발표 내내 원고나 PPT 화면만 그대로 읽어 내려감. 눈맞춤이 거의 없음."),
+        (5, "내용을 전혀 숙지하지 못하여 발표 진행이 어려움.")
+    ],
+    '맥락고려': [
+        (10, "주어진 시간 내에 분량을 배분하거나 맥락을 고려해 능동적으로 발표를 마침."),
+        (8, "주어진 시간에 거의 맞추거나 맥락을 고려해 조절하며 안정적으로 발표를 끝마침."),
+        (6, "시간 배분이 약간 부족하거나 맥락 고려가 미흡하여 급하게 마무리하거나 시간이 약간 초과됨."),
+        (4, "시간 조절에 실패하여 내용을 상당 부분 생략하거나 크게 초과함.")
+    ]
+}
+
+def get_rubric_description(item_name, score):
+    """학생이 받은 점수에 해당하는 루브릭 설명 반환"""
+    if item_name not in RUBRIC_DATA:
+        return "채점 기준 정보가 없습니다."
+    
+    rubric_list = RUBRIC_DATA[item_name]
+    # 오차 범위를 감안하여 가장 가까운 급간 기준 찾기
+    best_match = None
+    min_diff = float('inf')
+    
+    for level_score, desc in rubric_list:
+        diff = abs(score - level_score)
+        if diff < min_diff:
+            min_diff = diff
+            best_match = desc
+            
+    return best_match if best_match else "채점 기준 정보가 없습니다."
+
+# ---------------------------------------------------------
 # 2. 구글 시트 데이터 로드 및 저장 함수
 # ---------------------------------------------------------
 def load_sheet_data(spreadsheet_title, worksheet_title):
-    """구글 시트에서 데이터를 안전하게 로드하고 전처리 수행"""
+    """구글 시트에서 데이터를 안전하게 로드"""
     if gc is None:
         return pd.DataFrame()
     
@@ -89,7 +146,7 @@ def save_reflection(student_id, student_name, good_point, regret_point, learned_
         return False
 
 # ---------------------------------------------------------
-# 3. Gemini API 기반 피드백 생성 함수 (오류 방지 폴백 구현)
+# 3. Gemini API 기반 피드백 생성 함수
 # ---------------------------------------------------------
 def generate_growth_feedback(teacher_comment, student_name):
     """선생님의 관찰기록을 성장 중심 언어로 재가공"""
@@ -108,18 +165,18 @@ def generate_growth_feedback(teacher_comment, student_name):
     - 학생 이름을 부르며 따뜻한 말투로 전달해 주세요.
     """
     
-    # 404 모델 지원 오류 방지를 위한 순차 시도 모델 리스트
-    candidate_models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-pro']
+    candidate_models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash']
     
     for model_name in candidate_models:
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
-            return response.text
+            if response and response.text:
+                return response.text
         except Exception:
-            continue  # 다음 후보 모델 시도
+            continue
             
-    return f"피드백 생성 중 오류가 발생했습니다. (API 모델 연결 상태를 확인해주세요.)"
+    return "피드백을 가공하는 동안 오류가 발생했습니다. 아래 선생님 원본 피드백을 확인해주세요."
 
 # ---------------------------------------------------------
 # 4. 세션 상태 초기화
@@ -253,17 +310,20 @@ else:
                 ),
                 showlegend=False,
                 margin=dict(l=40, r=40, t=30, b=30),
-                height=340
+                height=320
             )
             st.plotly_chart(fig, use_container_width=True)
             
             st.metric(label="🏆 최종 총점", value=f"{student.get('최종 총점(100점)', '-')} / 100 점")
             
-            st.markdown("**📌 세부 항목별 점수**")
-            m_cols1, m_cols2, m_cols3 = st.columns(3)
-            for idx, (s_name, val, max_val) in enumerate(score_details):
-                target_col = [m_cols1, m_cols2, m_cols3][idx % 3]
-                target_col.caption(f"• **{s_name}**: {val:.0f}점 / {max_val}점")
+            # --- 세부 항목별 점수 및 루브릭(채점 기준) 조회 영역 ---
+            st.markdown("**📌 세부 항목별 점수 및 채점 기준**")
+            
+            for s_name, val, max_val in score_details:
+                rubric_desc = get_rubric_description(s_name, val)
+                with st.expander(f"• **{s_name}**: {val:.0f}점 / {max_val}점 만점"):
+                    st.markdown(f"**📖 나의 수행 수준 기준:**")
+                    st.caption(rubric_desc)
 
         else:
             st.info("평가 점수 데이터가 존재하지 않습니다.")
