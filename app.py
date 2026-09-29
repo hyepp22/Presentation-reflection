@@ -1,12 +1,11 @@
 import streamlit as st
 import pandas as pd
 import gspread
-import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 
 # ---------------------------------------------------------
-# 1. Page Config & Styles
+# 1. Page Config
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="말하기 수행평가 피드백 & 소감 제출",
@@ -15,25 +14,27 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# 2. Google Sheets API 연동 함수
+# 2. Google Sheets 연동 및 데이터 처리 함수
 # ---------------------------------------------------------
 @st.cache_resource
 def get_gspread_client():
     # Streamlit Secrets에서 secrets.json 정보를 읽어옵니다.
-    # .streamlit/secrets.toml 파일 또는 Streamlit Cloud Secrets에 설정 필요
     credentials = dict(st.secrets["gcp_service_account"])
     gc = gspread.service_account_from_dict(credentials)
     return gc
 
-# 시트 ID 설정 (본인의 구글 시트 ID로 수정하세요)
-EVAL_SHEET_ID = "YOUR_EVAL_SHEET_KEY"        # 평가 점수/피드백 시트 ID
-REFLECTION_SHEET_ID = "YOUR_REFLECTION_SHEET_KEY"  # 학생 소감 제출용 시트 ID
+# 동일한 구글 시트 파일 ID 하나만 입력합니다.
+SPREADSHEET_ID = "1NxN6L57-Lr3ee-5HVf0duexlxAy0R6TiVsawnRjB58s" 
+
+# 탭 이름 설정 (실제 시트 탭 이름과 정확히 일치해야 합니다)
+EVAL_TAB_NAME = "발표 채점 및 관찰기록표 V4"     # 평가 점수/피드백이 있는 탭 이름
+REFLECTION_TAB_NAME = "학생소감" # 소감을 기록할 탭 이름
 
 def load_evaluation_data():
     try:
         gc = get_gspread_client()
-        sh = gc.open_by_key(EVAL_SHEET_ID)
-        worksheet = sh.get_worksheet(0) # 첫 번째 탭
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        worksheet = sh.worksheet(EVAL_TAB_NAME) # 지정한 탭에서 데이터 불러오기
         data = worksheet.get_all_records()
         return pd.DataFrame(data)
     except Exception as e:
@@ -43,8 +44,8 @@ def load_evaluation_data():
 def save_reflection_data(row_data):
     try:
         gc = get_gspread_client()
-        sh = gc.open_by_key(REFLECTION_SHEET_ID)
-        worksheet = sh.get_worksheet(0)
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        worksheet = sh.worksheet(REFLECTION_TAB_NAME) # 소감제출 탭으로 지정
         worksheet.append_row(row_data)
         return True
     except Exception as e:
@@ -57,10 +58,10 @@ def save_reflection_data(row_data):
 st.title("🎤 말하기 수행평가 결과 확인 및 소감 작성")
 st.write("학번과 이름을 입력하여 본인의 평가 피드백을 확인하고, 성찰 소감을 작성해 제출해 주세요.")
 
-# 데이터 로드
+# 평가 데이터 로드
 df_eval = load_evaluation_data()
 
-# 로그인 / 학번·이름 조회 파트
+# 학생 로그인 및 조회
 with st.sidebar:
     st.header("👤 학생 정보 입력")
     student_id = st.text_input("학번 (예: 10101)", "").strip()
@@ -69,9 +70,9 @@ with st.sidebar:
 
 if search_btn or (student_id and student_name):
     if df_eval.empty:
-        st.warning("평가 데이터가 없습니다. 시트 연동을 확인해 주세요.")
+        st.warning("평가 데이터가 없습니다. 구글 시트 연동 및 탭 이름을 확인해 주세요.")
     else:
-        # 데이터 검색 (시트의 열 이름이 '학번', '이름'이라고 가정)
+        # 데이터 검색 ('학번', '이름' 열 기준)
         student_data = df_eval[(df_eval['학번'].astype(str) == student_id) & (df_eval['이름'] == student_name)]
         
         if student_data.empty:
@@ -83,11 +84,11 @@ if search_btn or (student_id and student_name):
             st.divider()
 
             # ---------------------------------------------------------
-            # 4. 점수 시각화 & 피드백 영역
+            # 4. 점수 시각화 (레이더 차트 & 표)
             # ---------------------------------------------------------
             col1, col2 = st.columns([1, 1])
 
-            # 항목별 점수 가져오기 (시트 칼럼명이 아래와 동일해야 함)
+            # 점수 항목 가져오기
             score_context = float(student_info.get('맥락 및 구성&매체 활용', 0))
             score_speaking = float(student_info.get('말하기', 0))
             score_audience = float(student_info.get('청중', 0))
@@ -97,11 +98,9 @@ if search_btn or (student_id and student_name):
 
             with col1:
                 st.subheader("📊 영역별 점수 시각화")
-                
-                # 레이더 차트 (Radar Chart) 생성
                 fig = go.Figure()
                 fig.add_trace(go.Scatterpolar(
-                    r=scores + [scores[0]],  # 폐곡선을 위해 첫 점 반복
+                    r=scores + [scores[0]],  # 레이더 차트 폐곡선 처리
                     theta=categories + [categories[0]],
                     fill='toself',
                     name='내 점수',
@@ -109,7 +108,7 @@ if search_btn or (student_id and student_name):
                 ))
                 fig.update_layout(
                     polar=dict(
-                        radialaxis=dict(visible=True, range=[0, 100]) # 만점에 맞게 range 조정 가능
+                        radialaxis=dict(visible=True, range=[0, 100]) # 평가 만점에 맞추어 상한값 조정 가능
                     ),
                     showlegend=False,
                     margin=dict(l=40, r=40, t=40, b=40)
@@ -126,7 +125,9 @@ if search_btn or (student_id and student_name):
 
             st.divider()
 
-            # 피드백 영역 (루브릭 / 교사 피드백 / AI 피드백)
+            # ---------------------------------------------------------
+            # 5. 피드백 확인 영역
+            # ---------------------------------------------------------
             st.subheader("💡 평가 피드백 확인")
             
             tab1, tab2, tab3 = st.tabs(["📋 루브릭 기준 피드백", "✏️ 교사 직접 피드백", "🤖 AI 보완 피드백"])
@@ -146,7 +147,7 @@ if search_btn or (student_id and student_name):
             st.divider()
 
             # ---------------------------------------------------------
-            # 5. 학생 성찰 소감 작성 폼
+            # 6. 학생 성찰 소감 작성 폼
             # ---------------------------------------------------------
             st.subheader("✍️ 나의 발표 성찰 소감 작성하기")
             st.caption("피드백을 바탕으로 자신의 발표를 되돌아보고 소감을 작성해 주세요.")
@@ -161,9 +162,8 @@ if search_btn or (student_id and student_name):
 
                 if submit_btn:
                     if not (good_point and bad_point and learned_point and action_plan):
-                        st.warning("모든 항목을 입력해야 제출이 가능합니다.")
+                        st.warning("모든 항목을 작성해야 제출이 가능합니다.")
                     else:
-                        # 제출 데이터 구성
                         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         new_row = [
                             current_time,
@@ -177,6 +177,6 @@ if search_btn or (student_id and student_name):
 
                         if save_reflection_data(new_row):
                             st.balloons()
-                            st.success("소감이 성공적으로 제출되었습니다! 수고하셨습니다.")
+                            st.success("소감이 성공적으로 제출되었습니다!")
 else:
     st.info("왼쪽 사이드바에서 학번과 이름을 입력한 후 [조회하기]를 눌러주세요.")
