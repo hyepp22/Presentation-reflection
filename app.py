@@ -36,9 +36,9 @@ init_gemini()
 gc = get_gspread_client()
 
 # 구글 드라이브 파일명 및 워크시트(탭) 이름 설정
-SPREADSHEET_NAME = "기억 박물관 발표 채점 및 관찰기록표(최종)"  # 구글 드라이브 파일명
-EVAL_WORKSHEET = "발표 채점 및 관찰기록표 V4"                  # 채점표 탭 이름
-REFLECTION_WORKSHEET = "학생소감"                              # 학생소감 탭 이름
+SPREADSHEET_NAME = "기억 박물관 발표 채점 및 관찰기록표(최종)"
+EVAL_WORKSHEET = "발표 채점 및 관찰기록표 V4"
+REFLECTION_WORKSHEET = "학생소감"
 
 # ---------------------------------------------------------
 # 2. 구글 시트 데이터 로드 및 저장 함수
@@ -69,12 +69,11 @@ def load_sheet_data(spreadsheet_title, worksheet_title):
     return df
 
 def save_reflection(student_id, student_name, good_point, regret_point, learned_point, action_point):
-    """학생 소감을 구글 시트 '학생소감' 탭의 6개 컬럼에 맞춰 저장"""
+    """학생 소감을 구글 시트에 저장"""
     try:
         sh = gc.open(SPREADSHEET_NAME)
         ws = sh.worksheet(REFLECTION_WORKSHEET)
         
-        # [학번, 이름, 잘한 점, 아쉬웠던 점, 새롭게 알게 된 점, 다음 발표에서 실천할 점] 순서로 저장
         row_data = [
             student_id, 
             student_name, 
@@ -129,15 +128,16 @@ if 'student_info' not in st.session_state:
     st.session_state.student_info = None
 
 # ---------------------------------------------------------
-# 5. 메인 UI 및 로그인/조회
+# 5. 메인 UI - 본인 인증
 # ---------------------------------------------------------
-st.title("📝 발표 결과 조회 및 소감 작성 시스템")
+st.title("📝 발표 결과 조회 및 소감 작성")
 
 if not st.session_state.authenticated:
     st.subheader("🔑 학생 본인 인증")
     st.caption("학번, 이름, 비밀번호를 정확히 입력해 주세요.")
 
-    col1, col2, col3 = st.columns(3)
+    # 모바일/태블릿 화면 고려 (입력창 나열)
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         input_student_id = st.text_input("학번", placeholder="예: 10101")
     with col2:
@@ -145,7 +145,8 @@ if not st.session_state.authenticated:
     with col3:
         input_password = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
 
-    search_button = st.button("🔍 조회하기", type="primary", use_container_width=True)
+    st.markdown("---")
+    search_button = st.button("🔍 발표 결과 조회하기", type="primary", use_container_width=True)
 
     if search_button:
         if not input_student_id.strip() or not input_name.strip() or not input_password.strip():
@@ -181,16 +182,17 @@ if not st.session_state.authenticated:
                         st.error("입력하신 학번, 이름 또는 비밀번호가 일치하지 않습니다.")
 
 # ---------------------------------------------------------
-# 6. 인증 성공 후 화면 (결과 조회 & 소감 제출)
+# 6. 인증 성공 후 화면 (반응형 뷰 & 점수 만점 표기)
 # ---------------------------------------------------------
 else:
     student = st.session_state.student_info
     student_id = student.get('학번', '')
     student_name = student.get('이름', '')
 
-    col_head, col_logout = st.columns([4, 1])
+    # 상단 모바일 호환 헤더
+    col_head, col_logout = st.columns([3, 1])
     with col_head:
-        st.success(f"🎉 환영합니다, **{student_id} {student_name}** 학생!")
+        st.success(f"🎉 **{student_id} {student_name}** 학생, 환영합니다!")
     with col_logout:
         if st.button("🚪 로그아웃", use_container_width=True):
             st.session_state.authenticated = False
@@ -200,47 +202,75 @@ else:
     st.divider()
 
     # --- Section A: 점수 레이더 차트 & 피드백 ---
+    # 모바일/태블릿 가로 폭에 따라 자연스럽게 세로 배치되는 컬럼 구조
     col_chart, col_ai = st.columns([1, 1])
 
     with col_chart:
         st.subheader("📊 항목별 발표 평가 점수")
         
+        # 6개 평가 항목 및 만점 정의
         score_info = [
-            ('맥락 및 구성(10점)', 10),
-            ('매체 활용(10점)', 10),
-            ('전달력(20점)', 20),
-            ('반/비언어(10점)', 10),
-            ('내용 숙지(20점)', 20),
-            ('맥락고려(10점)', 10)
+            ('맥락 및 구성(10점)', 10, '맥락/구성'),
+            ('매체 활용(10점)', 10, '매체활용'),
+            ('전달력(20점)', 20, '전달력'),
+            ('반/비언어(10점)', 10, '반/비언어'),
+            ('내용 숙지(20점)', 20, '내용숙지'),
+            ('맥락고려(10점)', 10, '맥락고려')
         ]
         
-        categories = []
+        chart_categories = []
         scores = []
-        
-        for col_name, max_val in score_info:
-            if col_name in student:
-                categories.append(col_name.split('(')[0])
+        max_scores = []
+        score_details = []
+
+        for full_col, max_val, short_name in score_info:
+            if full_col in student:
                 try:
-                    scores.append(float(student[col_name]))
+                    val = float(student[full_col])
                 except ValueError:
-                    scores.append(0.0)
+                    val = 0.0
+                
+                # 축 이름에 만점 명시 (예: 맥락/구성 [10점 만점])
+                chart_categories.append(f"{short_name}<br>({max_val}점 만점)")
+                scores.append(val)
+                max_scores.append(max_val)
+                score_details.append((short_name, val, max_val))
 
         if scores:
-            fig = go.Figure(data=go.Scatterpolar(
+            # 모바일 최적화 레이더 차트
+            fig = go.Figure()
+
+            fig.add_trace(go.Scatterpolar(
                 r=scores + [scores[0]],
-                theta=categories + [categories[0]],
+                theta=chart_categories + [chart_categories[0]],
                 fill='toself',
+                name='획득 점수',
                 line_color='#2b5c8f'
             ))
 
             fig.update_layout(
-                polar=dict(radialaxis=dict(visible=True, range=[0, 20])),
+                polar=dict(
+                    radialaxis=dict(
+                        visible=True,
+                        range=[0, 20]  # 최대 점수 축 설정
+                    )
+                ),
                 showlegend=False,
-                height=380
+                margin=dict(l=40, r=40, t=30, b=30),  # 태블릿/모바일 터치 마진 최적화
+                height=340
             )
             st.plotly_chart(fig, use_container_width=True)
             
-            st.metric(label="🏆 최종 총점 (100점 만점)", value=f"{student.get('최종 총점(100점)', '-')} 점")
+            # 최종 총점 및 항목별 획득/만점 요약 Grid
+            st.metric(label="🏆 최종 총점", value=f"{student.get('최종 총점(100점)', '-')} / 100 점")
+            
+            # 소형 타일 카드 형태로 항목별 점수 명시
+            st.markdown("**📌 세부 항목별 점수**")
+            m_cols1, m_cols2, m_cols3 = st.columns(3)
+            for idx, (s_name, val, max_val) in enumerate(score_details):
+                target_col = [m_cols1, m_cols2, m_cols3][idx % 3]
+                target_col.caption(f"• **{s_name}**: {val:.0f}점 / {max_val}점")
+
         else:
             st.info("평가 점수 데이터가 존재하지 않습니다.")
 
@@ -255,19 +285,21 @@ else:
 
     st.divider()
 
-    # --- Section B: 학생 소감 작성 및 제출 (시트 컬럼과 1:1 매핑) ---
+    # --- Section B: 학생 소감 작성 및 제출 ---
     st.subheader("✍️ 나의 발표 소감 작성하기")
-    st.caption("발표를 마치며 느낀 점을 4가지 항목에 따라 솔직하게 작성해 주세요.")
+    st.caption("발표를 마치며 느낀 점을 4가지 항목에 따라 작성해 주세요.")
 
-    col_f1, col_f2 = st.columns(2)
+    # 태블릿/모바일 반응형 2x2 영역
+    col_f1, col_f2 = st.columns([1, 1])
     with col_f1:
-        good_point = st.text_area("1. 잘한 점", height=100, placeholder="이번 발표에서 스스로 칭찬하고 싶은 부분은 무엇인가요?")
-        learned_point = st.text_area("3. 새롭게 알게 된 점", height=100, placeholder="발표를 준비하고 진행하며 새롭게 깨달은 점은 무엇인가요?")
+        good_point = st.text_area("1. 잘한 점", height=110, placeholder="이번 발표에서 스스로 칭찬하고 싶은 부분은 무엇인가요?")
+        learned_point = st.text_area("3. 새롭게 알게 된 점", height=110, placeholder="발표를 준비하고 진행하며 깨달은 점은 무엇인가요?")
 
     with col_f2:
-        regret_point = st.text_area("2. 아쉬웠던 점", height=100, placeholder="조금 더 보완했으면 좋았을 아쉬운 부분은 무엇인가요?")
-        action_point = st.text_area("4. 다음 발표에서 실천할 점", height=100, placeholder="다음 발표에서는 어떤 점을 더욱 노력할 것인가요?")
+        regret_point = st.text_area("2. 아쉬웠던 점", height=110, placeholder="조금 더 보완했으면 좋았을 아쉬운 부분은 무엇인가요?")
+        action_point = st.text_area("4. 다음 발표에서 실천할 점", height=110, placeholder="다음 발표에서는 어떤 점을 더욱 노력할 것인가요?")
 
+    st.markdown("---")
     if st.button("📤 소감 제출하기", type="primary", use_container_width=True):
         if not good_point.strip() or not regret_point.strip() or not learned_point.strip() or not action_point.strip():
             st.warning("4가지 항목을 모두 작성한 후 제출해 주세요.")
