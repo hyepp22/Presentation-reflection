@@ -254,7 +254,7 @@ else:
     # --- Section A: 점수 차트 & 선생님 피드백 ---
     col_chart, col_ai = st.columns([1, 1])
 
-   with col_chart:
+    with col_chart:
         st.subheader("📊 항목별 발표 평가 점수")
         
         score_info = [
@@ -328,6 +328,7 @@ else:
 
         else:
             st.info("평가 점수 데이터가 존재하지 않습니다.")
+
     with col_ai:
         st.subheader("💌 선생님의 발표 피드백")
         teacher_comment = student.get('관찰 기록 및 교사 피드백', '')
@@ -335,6 +336,7 @@ else:
         # 피드백 다듬기 수행
         final_feedback = format_feedback(teacher_comment, student_name)
         st.info(final_feedback)
+    
 
     st.divider()
 
