@@ -136,40 +136,48 @@ def save_reflection(student_id, student_name, good_point, regret_point, learned_
         return False
 
 # ---------------------------------------------------------
-# 3. 피드백 다듬기 함수 (오류 메시지 노출 완전 방지)
+# 3. 피드백 다듬기 함수 (Gemini API 호출 및 오류 디버깅)
 # ---------------------------------------------------------
 def format_feedback(teacher_comment, student_name):
-    """피드백 다듬기 (API 실패 시 원본 자연스럽게 제공)"""
+    """선생님의 피드백을 다정하게 가공 (오류 발생 시 원인 출력)"""
     if not teacher_comment or str(teacher_comment).strip() == "":
         return f"{student_name} 학생의 발표 피드백을 작성 중입니다."
     
     clean_comment = str(teacher_comment).strip()
 
     prompt = f"""
-    아래는 교사가 작성한 발표 평가 메모입니다.
-    이 내용을 {student_name} 학생에게 직접 다정하게 전하는 말로 다듬어주세요.
+    당신은 따뜻하고 다정한 국어 교사입니다.
+    아래는 '{student_name}' 학생의 발표에 대한 선생님의 평가 메모입니다.
     
     [평가 메모]:
     "{clean_comment}"
     
-    - 학생의 이름을 부르며 친절하고 다정한 말투로 작성하세요.
-    - 잘한 점과 성장 포인트를 다정하게 다듬어 3문장 안팎으로 작성하세요.
-    - 시스템이나 AI가 가공했다는 언급은 절대 하지 마세요.
+    위 메모를 바탕으로 학생에게 직접 말하듯이 격려와 다정한 어조로 자연스럽게 다듬어 주세요.
+    - {student_name} 학생의 이름을 부르며 따뜻한 말투로 작성해 주세요.
+    - 잘한 점과 성장 포인트를 살려 3~4문장 이내로 작성해 주세요.
+    - AI나 시스템이 수정했다는 언급은 절대 하지 마세요.
     """
     
-    candidate_models = ['gemini-1.5-flash', 'gemini-1.5-pro']
-    
+    # 1. Secrets에 API 키가 있는지 확인
+    if "GEMINI_API_KEY" not in st.secrets or not st.secrets["GEMINI_API_KEY"]:
+        return f"⚠️ [설정 오류] Streamlit Secrets에 GEMINI_API_KEY가 등록되지 않았습니다.\n\n[원문 피드백]\n{clean_comment}"
+
+    # 2. API 호출 시도 (모델 순차 적용)
+    candidate_models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash']
+    last_error = ""
+
     for model_name in candidate_models:
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
             if response and response.text:
                 return response.text.strip()
-        except Exception:
+        except Exception as e:
+            last_error = str(e)
             continue
             
-    # API 호출에 실패할 경우 에러 메시지 대신 원본 메시지 그대로 전달
-    return f"{student_name} 학생, {clean_comment}"
+    # 모든 모델 시도가 실패했을 때 에러 원인을 표시
+    return f"⚠️ [API 호출 오류] 피드백을 가공하지 못했습니다.\n원인: {last_error}\n\n[원문 피드백]\n{clean_comment}"
 
 # ---------------------------------------------------------
 # 4. 세션 상태 초기화
