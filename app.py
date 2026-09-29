@@ -254,7 +254,7 @@ else:
     # --- Section A: 점수 차트 & 선생님 피드백 ---
     col_chart, col_ai = st.columns([1, 1])
 
-    with col_chart:
+   with col_chart:
         st.subheader("📊 항목별 발표 평가 점수")
         
         score_info = [
@@ -267,8 +267,8 @@ else:
         ]
         
         chart_categories = []
-        scores = []
-        max_scores = []
+        percentages = []     # 차트 표현용 (달성률 %)
+        hover_texts = []     # 마우스 올렸을 때 보여줄 실제 점수 텍스트
         score_details = []
 
         for full_col, max_val, short_name in score_info:
@@ -278,32 +278,40 @@ else:
                 except ValueError:
                     val = 0.0
                 
+                # 달성률(%) 계산 (만점 대비 비율)
+                pct = (val / max_val) * 100 if max_val > 0 else 0
+                
                 chart_categories.append(f"{short_name}<br>({max_val}점 만점)")
-                scores.append(val)
-                max_scores.append(max_val)
+                percentages.append(pct)
+                hover_texts.append(f"{short_name}: {val:.0f}점 / {max_val}점 ({pct:.0f}%)")
                 score_details.append((short_name, val, max_val))
 
-        if scores:
+        if percentages:
             fig = go.Figure()
 
+            # 레이더 차트에 백분율(%)로 배치하고 hovertext에 실제 점수 표현
             fig.add_trace(go.Scatterpolar(
-                r=scores + [scores[0]],
+                r=percentages + [percentages[0]],
                 theta=chart_categories + [chart_categories[0]],
                 fill='toself',
-                name='획득 점수',
-                line_color='#2b5c8f'
+                name='달성률',
+                line_color='#2b5c8f',
+                hoverinfo='text',
+                hovertext=hover_texts + [hover_texts[0]]
             ))
 
             fig.update_layout(
                 polar=dict(
                     radialaxis=dict(
                         visible=True,
-                        range=[0, 20]
+                        range=[0, 100],            # 축을 0% ~ 100%로 설정하여 만점 시 외곽에 닿게 함
+                        tickvals=[0, 25, 50, 75, 100],
+                        ticktext=['0%', '25%', '50%', '75%', '100%']
                     )
                 ),
                 showlegend=False,
                 margin=dict(l=40, r=40, t=30, b=30),
-                height=320
+                height=340
             )
             st.plotly_chart(fig, use_container_width=True)
             
@@ -320,7 +328,6 @@ else:
 
         else:
             st.info("평가 점수 데이터가 존재하지 않습니다.")
-
     with col_ai:
         st.subheader("💌 선생님의 발표 피드백")
         teacher_comment = student.get('관찰 기록 및 교사 피드백', '')
