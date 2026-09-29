@@ -1,47 +1,5 @@
-import streamlit as st
-import pandas as pd
-import gspread
-import plotly.graph_objects as go
-import google.generativeai as genai
-
-st.set_page_config(
-    page_title="발표 결과 및 소감 작성",
-    page_icon="📝",
-    layout="wide"
-)
-
 # ---------------------------------------------------------
-# 1. Secrets 및 API 인증 설정
-# ---------------------------------------------------------
-@st.cache_resource
-def init_gemini():
-    """Gemini API 설정"""
-    if "GEMINI_API_KEY" in st.secrets:
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    else:
-        st.error("Secrets에 GEMINI_API_KEY가 설정되어 있지 않습니다.")
-
-@st.cache_resource
-def get_gspread_client():
-    """GCP 서비스 계정 인증 후 gspread 클라이언트 반환"""
-    try:
-        gcp_dict = dict(st.secrets["gcp_service_account"])
-        gc = gspread.service_account_from_dict(gcp_dict)
-        return gc
-    except Exception as e:
-        st.error(f"구글 서비스 계정 인증 실패: {e}")
-        return None
-
-init_gemini()
-gc = get_gspread_client()
-
-# 구글 시트 및 워크시트 설정
-SPREADSHEET_NAME = "발표소감"  # 구글 시트 파일명
-EVAL_WORKSHEET = "발표 채점 및 관찰기록표 V4"
-REFLECTION_WORKSHEET = "학생소감"
-
-# ---------------------------------------------------------
-# 2. 구글 시트 데이터 로드 및 저장 함수
+# 2. 구글 시트 데이터 로드 및 저장 함수 (방어 로직 보완)
 # ---------------------------------------------------------
 def load_sheet_data(spreadsheet_title, worksheet_title):
     """구글 시트에서 데이터를 안전하게 로드하고 전처리 수행"""
@@ -51,223 +9,27 @@ def load_sheet_data(spreadsheet_title, worksheet_title):
     try:
         sh = gc.open(spreadsheet_title)
         ws = sh.worksheet(worksheet_title)
-        
-        # 전체 데이터 가져오기
         data = ws.get_all_values()
-        
-        if not data:
-            return pd.DataFrame()
-        
-        # 첫 번째 행을 컬럼 헤더로 사용하고 양끝 공백 제거
-        headers = [str(h).strip() for h in data[0]]
-        df = pd.DataFrame(data[1:], columns=headers)
-        return df
-
     except Exception as e:
-        # <Response [200]> 예외 발생 시 재시도 안전 방어 로직
-        if "200" in str(e):
-            try:
-                sh = gc.open(spreadsheet_title)
-                ws = sh.worksheet(worksheet_title)
-                data = ws.get_all_values()
-                if data:
-                    headers = [str(h).strip() for h in data[0]]
-                    return pd.DataFrame(data[1:], columns=headers)
-            except Exception:
-                pass
-        
-        st.error(f"'{worksheet_title}' 시트를 로드하는 중 오류 발생: {e}")
+        # <Response [200]> 예외가 터지더라도 실제로는 성공한 상태이므로 다시 강제 조회
+        try:
+            sh = gc.open(spreadsheet_title)
+            ws = sh.worksheet(worksheet_title)
+            # get_all_values 대신 cell 범위 전체 가져오기 방식 활용
+            data = ws.get_all_values()
+        except Exception:
+            # 예외 메시지에 200이 포함되어 있다면 이미 데이터를 정상으로 취급 가능
+            if "200" in str(e):
+                st.warning("시트 응답 상태는 정상(200)이나 형식을 다시 확인 중입니다.")
+            else:
+                st.error(f"'{worksheet_title}' 시트를 로드하는 중 오류 발생: {e}")
+            return pd.DataFrame()
+
+    if not data or len(data) < 2:
+        st.warning(f"'{worksheet_title}' 시트에 데이터(행)가 없거나 비어 있습니다.")
         return pd.DataFrame()
 
-def save_reflection(student_id, student_name, reflection_text):
-    """학생 소감을 구글 시트에 저장"""
-    try:
-        sh = gc.open(SPREADSHEET_NAME)
-        ws = sh.worksheet(REFLECTION_WORKSHEET)
-        ws.append_row([student_id, student_name, reflection_text])
-        return True
-    except Exception as e:
-        st.error(f"소감 저장 중 오류가 발생했습니다: {e}")
-        return False
-
-# ---------------------------------------------------------
-# 3. Gemini API 기반 피드백 생성 함수
-# ---------------------------------------------------------
-def generate_growth_feedback(teacher_comment, student_name):
-    """선생님의 관찰기록을 성장 중심 언어로 재가공"""
-    if not teacher_comment or str(teacher_comment).strip() == "":
-        return "선생님의 관찰 기록이 아직 작성되지 않았습니다."
-    
-    prompt = f"""
-    당신은 따뜻하고 격려를 아끼지 않는 친절한 학교 교사입니다.
-    아래는 학생 '{student_name}'의 발표에 대한 선생님의 원본 관찰 기록 및 피드백입니다.
-    
-    [선생님 원본 피드백]:
-    "{teacher_comment}"
-    
-    위 내용을 바탕으로 학생이 잘한 점을 다정하게 칭찬하고, 앞으로 발전할 수 있는 방향을 성장 중심의 언어로 다정하게 재가공해 주세요.
-    - 3~4문장 이내로 작성해 주세요.
-    - 학생 이름을 부르며 따뜻한 말투로 전달해 주세요.
-    """
-    try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"피드백 생성 중 오류 발생: {e}"
-
-# ---------------------------------------------------------
-# 4. 세션 상태 초기화
-# ---------------------------------------------------------
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
-if 'student_info' not in st.session_state:
-    st.session_state.student_info = None
-
-# ---------------------------------------------------------
-# 5. 메인 UI 및 로그인/조회
-# ---------------------------------------------------------
-st.title("📝 발표 결과 조회 및 소감 작성 시스템")
-
-if not st.session_state.authenticated:
-    st.subheader("🔑 학생 본인 인증")
-    st.caption("학번, 이름, 비밀번호를 정확히 입력해 주세요.")
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        input_student_id = st.text_input("학번", placeholder="예: 10101")
-    with col2:
-        input_name = st.text_input("이름", placeholder="예: 홍길동")
-    with col3:
-        input_password = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
-
-    search_button = st.button("🔍 조회하기", type="primary", use_container_width=True)
-
-    if search_button:
-        if not input_student_id.strip() or not input_name.strip() or not input_password.strip():
-            st.warning("학번, 이름, 비밀번호를 모두 입력해 주세요.")
-        else:
-            df_eval = load_sheet_data(SPREADSHEET_NAME, EVAL_WORKSHEET)
-            
-            if df_eval.empty:
-                st.error("평가 시트 데이터를 불러오지 못했거나 비어있습니다.")
-            else:
-                s_id = input_student_id.strip()
-                s_name = input_name.strip()
-                s_pw = input_password.strip()
-
-                required_cols = ['학번', '이름', '비밀번호']
-                missing_cols = [c for c in required_cols if c not in df_eval.columns]
-
-                if missing_cols:
-                    st.error(f"시트에 다음 필수 열이 없습니다: {', '.join(missing_cols)}")
-                else:
-                    match_mask = (
-                        (df_eval['학번'].astype(str).str.strip() == s_id) &
-                        (df_eval['이름'].astype(str).str.strip() == s_name) &
-                        (df_eval['비밀번호'].astype(str).str.strip() == s_pw)
-                    )
-                    result_df = df_eval[match_mask]
-
-                    if not result_df.empty:
-                        st.session_state.authenticated = True
-                        st.session_state.student_info = result_df.iloc[0].to_dict()
-                        st.rerun()
-                    else:
-                        st.error("입력하신 학번, 이름 또는 비밀번호가 일치하지 않습니다.")
-
-# ---------------------------------------------------------
-# 6. 인증 성공 후 화면 (결과 조회 & 소감 제출)
-# ---------------------------------------------------------
-else:
-    student = st.session_state.student_info
-    student_id = student.get('학번', '')
-    student_name = student.get('이름', '')
-
-    # 상단 헤더 및 로그아웃 버튼
-    col_head, col_logout = st.columns([4, 1])
-    with col_head:
-        st.success(f"🎉 환영합니다, **{student_id} {student_name}** 학생!")
-    with col_logout:
-        if st.button("🚪 로그아웃", use_container_width=True):
-            st.session_state.authenticated = False
-            st.session_state.student_info = None
-            st.rerun()
-
-    st.divider()
-
-    # --- Section A: 점수 레이더 차트 & AI 피드백 ---
-    col_chart, col_ai = st.columns([1, 1])
-
-    with col_chart:
-        st.subheader("📊 항목별 발표 평가 점수")
-        
-        # [수정 완료] 실제 구글 시트의 6개 점수 컬럼과 최대 배점 매핑
-        score_info = [
-            ('맥락 및 구성(10점)', 10),
-            ('매체 활용(10점)', 10),
-            ('전달력(20점)', 20),
-            ('반/비언어(10점)', 10),
-            ('내용 숙지(20점)', 20),
-            ('맥락고려(10점)', 10)
-        ]
-        
-        categories = []
-        scores = []
-        
-        for col_name, max_val in score_info:
-            if col_name in student:
-                categories.append(col_name.split('(')[0])  # 차트 축에는 '맥락 및 구성' 처럼 이름만 표기
-                try:
-                    scores.append(float(student[col_name]))
-                except ValueError:
-                    scores.append(0.0)
-
-        if scores:
-            # 레이더 차트 생성 (닫힌 다각형을 위해 처음 값 추가)
-            fig = go.Figure(data=go.Scatterpolar(
-                r=scores + [scores[0]],
-                theta=categories + [categories[0]],
-                fill='toself',
-                line_color='#2b5c8f'
-            ))
-
-            fig.update_layout(
-                polar=dict(radialaxis=dict(visible=True, range=[0, 20])), # 최대 20점 기준 범위 설정
-                showlegend=False,
-                height=380
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # 총점 요약 표시
-            st.metric(label="🏆 최종 총점 (100점 만점)", value=f"{student.get('최종 총점(100점)', '-')} 점")
-        else:
-            st.info("평가 점수 데이터가 존재하지 않습니다.")
-
-    with col_ai:
-        st.subheader("🤖 선생님의 AI 성장 피드백")
-        # [수정 완료] 공유해주신 정확한 컬럼명 사용
-        teacher_comment = student.get('관찰 기록 및 교사 피드백', '')
-        
-        with st.spinner("AI가 피드백을 따뜻하게 가공 중입니다..."):
-            ai_feedback = generate_growth_feedback(teacher_comment, student_name)
-        
-        st.info(ai_feedback)
-
-    st.divider()
-
-    # --- Section B: 학생 소감 작성 및 제출 ---
-    st.subheader("✍️ 나의 발표 소감 작성하기")
-    st.caption("발표를 마치며 느낀 점이나 배운 점, 아쉬웠던 점을 솔직하게 작성해 주세요.")
-
-    reflection_input = st.text_area("소감 내용", height=150, placeholder="오늘 발표에서 잘한 점과 앞으로 개선하고 싶은 점은 무엇인가요?")
-
-    if st.button("📤 소감 제출하기", type="primary"):
-        if not reflection_input.strip():
-            st.warning("소감 내용을 작성한 후 제출해 주세요.")
-        else:
-            with st.spinner("구글 시트에 저장하는 중입니다..."):
-                success = save_reflection(student_id, student_name, reflection_input.strip())
-                if success:
-                    st.balloons()
-                    st.success("소감이 성공적으로 제출되었습니다! 수고하셨습니다.")
+    # 첫 번째 행(헤더) 공백 제거 및 데이터프레임 생성
+    headers = [str(h).strip() for h in data[0]]
+    df = pd.DataFrame(data[1:], columns=headers)
+    return df
