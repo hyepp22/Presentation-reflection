@@ -136,7 +136,7 @@ def save_reflection(student_id, student_name, good_point, regret_point, learned_
         return False
 
 # ---------------------------------------------------------
-# 3. 피드백 다듬기 함수 (오류 시 원문 감춤)
+# 3. 피드백 다듬기 함수 (최신 모델 반영)
 # ---------------------------------------------------------
 def format_feedback(teacher_comment, student_name):
     """선생님의 피드백을 다정하게 가공 (오류 시 원문은 숨김)"""
@@ -160,15 +160,15 @@ def format_feedback(teacher_comment, student_name):
     - AI나 시스템이 수정했다는 언급은 절대 하지 마세요.
     """
     
-    # Secrets에 API 키가 없는 경우 원문 감춤
+    # Secrets에 API 키가 없는 경우 기본 메시지 반환
     if "GEMINI_API_KEY" not in st.secrets or not st.secrets["GEMINI_API_KEY"]:
         return default_msg
 
-    # 최신 모델 순서대로 호출 시도
+    # 에러 메시지에서 권장하는 모델 및 이전 주요 모델 목록 순차 호출
     candidate_models = [
-        'gemini-2.5-flash', 
-        'gemini-1.5-flash', 
-        'gemini-2.0-flash-exp',
+        'gemini-3.8-flash',
+        'gemini-1.5-flash',
+        'gemini-2.5-flash',
         'gemini-1.5-pro'
     ]
 
@@ -181,7 +181,7 @@ def format_feedback(teacher_comment, student_name):
         except Exception:
             continue
             
-    # 모든 모델 실패 시에도 원문 없이 기본 안내 메시지만 반환
+    # 모든 모델 호출 실패 시 기본 메시지 반환
     return default_msg
 
 # ---------------------------------------------------------
