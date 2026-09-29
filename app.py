@@ -136,12 +136,14 @@ def save_reflection(student_id, student_name, good_point, regret_point, learned_
         return False
 
 # ---------------------------------------------------------
-# 3. 피드백 다듬기 함수 (Gemini API 호출 및 오류 디버깅)
+# 3. 피드백 다듬기 함수 (오류 시 원문 감춤)
 # ---------------------------------------------------------
 def format_feedback(teacher_comment, student_name):
-    """선생님의 피드백을 다정하게 가공 (오류 발생 시 원인 출력)"""
+    """선생님의 피드백을 다정하게 가공 (오류 시 원문은 숨김)"""
+    default_msg = f"{student_name} 학생의 발표 피드백을 다듬는 중입니다."
+    
     if not teacher_comment or str(teacher_comment).strip() == "":
-        return f"{student_name} 학생의 발표 피드백을 작성 중입니다."
+        return default_msg
     
     clean_comment = str(teacher_comment).strip()
 
@@ -158,13 +160,17 @@ def format_feedback(teacher_comment, student_name):
     - AI나 시스템이 수정했다는 언급은 절대 하지 마세요.
     """
     
-    # 1. Secrets에 API 키가 있는지 확인
+    # Secrets에 API 키가 없는 경우 원문 감춤
     if "GEMINI_API_KEY" not in st.secrets or not st.secrets["GEMINI_API_KEY"]:
-        return f"⚠️ [설정 오류] Streamlit Secrets에 GEMINI_API_KEY가 등록되지 않았습니다.\n\n[원문 피드백]\n{clean_comment}"
+        return default_msg
 
-    # 2. API 호출 시도 (모델 순차 적용)
-    candidate_models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash']
-    last_error = ""
+    # 최신 모델 순서대로 호출 시도
+    candidate_models = [
+        'gemini-2.5-flash', 
+        'gemini-1.5-flash', 
+        'gemini-2.0-flash-exp',
+        'gemini-1.5-pro'
+    ]
 
     for model_name in candidate_models:
         try:
@@ -172,12 +178,11 @@ def format_feedback(teacher_comment, student_name):
             response = model.generate_content(prompt)
             if response and response.text:
                 return response.text.strip()
-        except Exception as e:
-            last_error = str(e)
+        except Exception:
             continue
             
-    # 모든 모델 시도가 실패했을 때 에러 원인을 표시
-    return f"⚠️ [API 호출 오류] 피드백을 가공하지 못했습니다.\n원인: {last_error}\n\n[원문 피드백]\n{clean_comment}"
+    # 모든 모델 실패 시에도 원문 없이 기본 안내 메시지만 반환
+    return default_msg
 
 # ---------------------------------------------------------
 # 4. 세션 상태 초기화
