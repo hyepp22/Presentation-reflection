@@ -89,7 +89,7 @@ def save_reflection(student_id, student_name, good_point, regret_point, learned_
         return False
 
 # ---------------------------------------------------------
-# 3. Gemini API 기반 피드백 생성 함수
+# 3. Gemini API 기반 피드백 생성 함수 (오류 방지 폴백 구현)
 # ---------------------------------------------------------
 def generate_growth_feedback(teacher_comment, student_name):
     """선생님의 관찰기록을 성장 중심 언어로 재가공"""
@@ -107,17 +107,19 @@ def generate_growth_feedback(teacher_comment, student_name):
     - 3~4문장 이내로 작성해 주세요.
     - 학생 이름을 부르며 따뜻한 말투로 전달해 주세요.
     """
-    try:
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
+    
+    # 404 모델 지원 오류 방지를 위한 순차 시도 모델 리스트
+    candidate_models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-pro']
+    
+    for model_name in candidate_models:
         try:
-            model = genai.GenerativeModel('gemini-2.5-flash')
+            model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
             return response.text
         except Exception:
-            return f"피드백 생성 중 오류 발생: {e}"
+            continue  # 다음 후보 모델 시도
+            
+    return f"피드백 생성 중 오류가 발생했습니다. (API 모델 연결 상태를 확인해주세요.)"
 
 # ---------------------------------------------------------
 # 4. 세션 상태 초기화
@@ -136,7 +138,6 @@ if not st.session_state.authenticated:
     st.subheader("🔑 학생 본인 인증")
     st.caption("학번, 이름, 비밀번호를 정확히 입력해 주세요.")
 
-    # 모바일/태블릿 화면 고려 (입력창 나열)
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         input_student_id = st.text_input("학번", placeholder="예: 10101")
@@ -182,14 +183,13 @@ if not st.session_state.authenticated:
                         st.error("입력하신 학번, 이름 또는 비밀번호가 일치하지 않습니다.")
 
 # ---------------------------------------------------------
-# 6. 인증 성공 후 화면 (반응형 뷰 & 점수 만점 표기)
+# 6. 인증 성공 후 화면
 # ---------------------------------------------------------
 else:
     student = st.session_state.student_info
     student_id = student.get('학번', '')
     student_name = student.get('이름', '')
 
-    # 상단 모바일 호환 헤더
     col_head, col_logout = st.columns([3, 1])
     with col_head:
         st.success(f"🎉 **{student_id} {student_name}** 학생, 환영합니다!")
@@ -202,13 +202,11 @@ else:
     st.divider()
 
     # --- Section A: 점수 레이더 차트 & 피드백 ---
-    # 모바일/태블릿 가로 폭에 따라 자연스럽게 세로 배치되는 컬럼 구조
     col_chart, col_ai = st.columns([1, 1])
 
     with col_chart:
         st.subheader("📊 항목별 발표 평가 점수")
         
-        # 6개 평가 항목 및 만점 정의
         score_info = [
             ('맥락 및 구성(10점)', 10, '맥락/구성'),
             ('매체 활용(10점)', 10, '매체활용'),
@@ -230,14 +228,12 @@ else:
                 except ValueError:
                     val = 0.0
                 
-                # 축 이름에 만점 명시 (예: 맥락/구성 [10점 만점])
                 chart_categories.append(f"{short_name}<br>({max_val}점 만점)")
                 scores.append(val)
                 max_scores.append(max_val)
                 score_details.append((short_name, val, max_val))
 
         if scores:
-            # 모바일 최적화 레이더 차트
             fig = go.Figure()
 
             fig.add_trace(go.Scatterpolar(
@@ -252,19 +248,17 @@ else:
                 polar=dict(
                     radialaxis=dict(
                         visible=True,
-                        range=[0, 20]  # 최대 점수 축 설정
+                        range=[0, 20]
                     )
                 ),
                 showlegend=False,
-                margin=dict(l=40, r=40, t=30, b=30),  # 태블릿/모바일 터치 마진 최적화
+                margin=dict(l=40, r=40, t=30, b=30),
                 height=340
             )
             st.plotly_chart(fig, use_container_width=True)
             
-            # 최종 총점 및 항목별 획득/만점 요약 Grid
             st.metric(label="🏆 최종 총점", value=f"{student.get('최종 총점(100점)', '-')} / 100 점")
             
-            # 소형 타일 카드 형태로 항목별 점수 명시
             st.markdown("**📌 세부 항목별 점수**")
             m_cols1, m_cols2, m_cols3 = st.columns(3)
             for idx, (s_name, val, max_val) in enumerate(score_details):
@@ -289,7 +283,6 @@ else:
     st.subheader("✍️ 나의 발표 소감 작성하기")
     st.caption("발표를 마치며 느낀 점을 4가지 항목에 따라 작성해 주세요.")
 
-    # 태블릿/모바일 반응형 2x2 영역
     col_f1, col_f2 = st.columns([1, 1])
     with col_f1:
         good_point = st.text_area("1. 잘한 점", height=110, placeholder="이번 발표에서 스스로 칭찬하고 싶은 부분은 무엇인가요?")
