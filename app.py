@@ -68,12 +68,22 @@ def load_sheet_data(spreadsheet_title, worksheet_title):
     df = pd.DataFrame(data[1:], columns=headers)
     return df
 
-def save_reflection(student_id, student_name, reflection_text):
-    """학생 소감을 구글 시트에 저장"""
+def save_reflection(student_id, student_name, good_point, regret_point, learned_point, action_point):
+    """학생 소감을 구글 시트 '학생소감' 탭의 6개 컬럼에 맞춰 저장"""
     try:
         sh = gc.open(SPREADSHEET_NAME)
         ws = sh.worksheet(REFLECTION_WORKSHEET)
-        ws.append_row([student_id, student_name, reflection_text])
+        
+        # [학번, 이름, 잘한 점, 아쉬웠던 점, 새롭게 알게 된 점, 다음 발표에서 실천할 점] 순서로 저장
+        row_data = [
+            student_id, 
+            student_name, 
+            good_point, 
+            regret_point, 
+            learned_point, 
+            action_point
+        ]
+        ws.append_row(row_data)
         return True
     except Exception as e:
         st.error(f"소감 저장 중 오류가 발생했습니다: {e}")
@@ -99,12 +109,10 @@ def generate_growth_feedback(teacher_comment, student_name):
     - 학생 이름을 부르며 따뜻한 말투로 전달해 주세요.
     """
     try:
-        # 모델명을 최신 표준 지원 모델로 지정 (오류 수정)
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        # 1.5-flash-latest 실패 시 gemini-2.5-flash 등 예비 모델 시도
         try:
             model = genai.GenerativeModel('gemini-2.5-flash')
             response = model.generate_content(prompt)
@@ -237,7 +245,6 @@ else:
             st.info("평가 점수 데이터가 존재하지 않습니다.")
 
     with col_ai:
-        # [수정] 요청하신 문구로 변경
         st.subheader("💬 선생님의 피드백")
         teacher_comment = student.get('관찰 기록 및 교사 피드백', '')
         
@@ -248,18 +255,32 @@ else:
 
     st.divider()
 
-    # --- Section B: 학생 소감 작성 및 제출 ---
+    # --- Section B: 학생 소감 작성 및 제출 (시트 컬럼과 1:1 매핑) ---
     st.subheader("✍️ 나의 발표 소감 작성하기")
-    st.caption("발표를 마치며 느낀 점이나 배운 점, 아쉬웠던 점을 솔직하게 작성해 주세요.")
+    st.caption("발표를 마치며 느낀 점을 4가지 항목에 따라 솔직하게 작성해 주세요.")
 
-    reflection_input = st.text_area("소감 내용", height=150, placeholder="오늘 발표에서 잘한 점과 앞으로 개선하고 싶은 점은 무엇인가요?")
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        good_point = st.text_area("1. 잘한 점", height=100, placeholder="이번 발표에서 스스로 칭찬하고 싶은 부분은 무엇인가요?")
+        learned_point = st.text_area("3. 새롭게 알게 된 점", height=100, placeholder="발표를 준비하고 진행하며 새롭게 깨달은 점은 무엇인가요?")
 
-    if st.button("📤 소감 제출하기", type="primary"):
-        if not reflection_input.strip():
-            st.warning("소감 내용을 작성한 후 제출해 주세요.")
+    with col_f2:
+        regret_point = st.text_area("2. 아쉬웠던 점", height=100, placeholder="조금 더 보완했으면 좋았을 아쉬운 부분은 무엇인가요?")
+        action_point = st.text_area("4. 다음 발표에서 실천할 점", height=100, placeholder="다음 발표에서는 어떤 점을 더욱 노력할 것인가요?")
+
+    if st.button("📤 소감 제출하기", type="primary", use_container_width=True):
+        if not good_point.strip() or not regret_point.strip() or not learned_point.strip() or not action_point.strip():
+            st.warning("4가지 항목을 모두 작성한 후 제출해 주세요.")
         else:
-            with st.spinner("구글 시트에 저장하는 중입니다..."):
-                success = save_reflection(student_id, student_name, reflection_input.strip())
+            with st.spinner("구글 시트에 소감을 저장하는 중입니다..."):
+                success = save_reflection(
+                    student_id, 
+                    student_name, 
+                    good_point.strip(), 
+                    regret_point.strip(), 
+                    learned_point.strip(), 
+                    action_point.strip()
+                )
                 if success:
                     st.balloons()
                     st.success("소감이 성공적으로 제출되었습니다! 수고하셨습니다.")
