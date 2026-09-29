@@ -18,8 +18,6 @@ def init_gemini():
     """Gemini API 설정"""
     if "GEMINI_API_KEY" in st.secrets:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    else:
-        st.error("Secrets에 GEMINI_API_KEY가 설정되어 있지 않습니다.")
 
 @st.cache_resource
 def get_gspread_client():
@@ -29,7 +27,7 @@ def get_gspread_client():
         gc = gspread.service_account_from_dict(gcp_dict)
         return gc
     except Exception as e:
-        st.error(f"구글 서비스 계정 인증 실패: {e}")
+        st.error("구글 시트 연동 설정을 확인해주세요.")
         return None
 
 init_gemini()
@@ -80,12 +78,11 @@ RUBRIC_DATA = {
 }
 
 def get_rubric_description(item_name, score):
-    """학생이 받은 점수에 해당하는 루브릭 설명 반환"""
+    """학생 점수에 해당 루브릭 설명 반환"""
     if item_name not in RUBRIC_DATA:
         return "채점 기준 정보가 없습니다."
     
     rubric_list = RUBRIC_DATA[item_name]
-    # 오차 범위를 감안하여 가장 가까운 급간 기준 찾기
     best_match = None
     min_diff = float('inf')
     
@@ -101,7 +98,7 @@ def get_rubric_description(item_name, score):
 # 2. 구글 시트 데이터 로드 및 저장 함수
 # ---------------------------------------------------------
 def load_sheet_data(spreadsheet_title, worksheet_title):
-    """구글 시트에서 데이터를 안전하게 로드"""
+    """구글 시트 데이터 로드"""
     if gc is None:
         return pd.DataFrame()
     
@@ -109,14 +106,8 @@ def load_sheet_data(spreadsheet_title, worksheet_title):
         sh = gc.open(spreadsheet_title)
         ws = sh.worksheet(worksheet_title)
         data = ws.get_all_values()
-    except Exception as e:
-        try:
-            sh = gc.open(spreadsheet_title)
-            ws = sh.worksheet(worksheet_title)
-            data = ws.get_all_values()
-        except Exception:
-            st.error(f"'{worksheet_title}' 시트를 로드하는 중 오류 발생: {e}")
-            return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
     if not data or len(data) < 2:
         return pd.DataFrame()
@@ -141,42 +132,44 @@ def save_reflection(student_id, student_name, good_point, regret_point, learned_
         ]
         ws.append_row(row_data)
         return True
-    except Exception as e:
-        st.error(f"소감 저장 중 오류가 발생했습니다: {e}")
+    except Exception:
         return False
 
 # ---------------------------------------------------------
-# 3. Gemini API 기반 피드백 생성 함수
+# 3. 피드백 다듬기 함수 (오류 메시지 노출 완전 방지)
 # ---------------------------------------------------------
-def generate_growth_feedback(teacher_comment, student_name):
-    """선생님의 관찰기록을 성장 중심 언어로 재가공"""
+def format_feedback(teacher_comment, student_name):
+    """피드백 다듬기 (API 실패 시 원본 자연스럽게 제공)"""
     if not teacher_comment or str(teacher_comment).strip() == "":
-        return "선생님의 관찰 기록이 아직 작성되지 않았습니다."
+        return f"{student_name} 학생의 발표 피드백을 작성 중입니다."
     
+    clean_comment = str(teacher_comment).strip()
+
     prompt = f"""
-    당신은 따뜻하고 격려를 아끼지 않는 친절한 학교 교사입니다.
-    아래는 학생 '{student_name}'의 발표에 대한 선생님의 원본 관찰 기록 및 피드백입니다.
+    아래는 교사가 작성한 발표 평가 메모입니다.
+    이 내용을 {student_name} 학생에게 직접 다정하게 전하는 말로 다듬어주세요.
     
-    [선생님 원본 피드백]:
-    "{teacher_comment}"
+    [평가 메모]:
+    "{clean_comment}"
     
-    위 내용을 바탕으로 학생이 잘한 점을 다정하게 칭찬하고, 앞으로 발전할 수 있는 방향을 성장 중심의 언어로 다정하게 재가공해 주세요.
-    - 3~4문장 이내로 작성해 주세요.
-    - 학생 이름을 부르며 따뜻한 말투로 전달해 주세요.
+    - 학생의 이름을 부르며 친절하고 다정한 말투로 작성하세요.
+    - 잘한 점과 성장 포인트를 다정하게 다듬어 3문장 안팎으로 작성하세요.
+    - 시스템이나 AI가 가공했다는 언급은 절대 하지 마세요.
     """
     
-    candidate_models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash']
+    candidate_models = ['gemini-1.5-flash', 'gemini-1.5-pro']
     
     for model_name in candidate_models:
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
             if response and response.text:
-                return response.text
+                return response.text.strip()
         except Exception:
             continue
             
-    return "피드백을 가공하는 동안 오류가 발생했습니다. 아래 선생님 원본 피드백을 확인해주세요."
+    # API 호출에 실패할 경우 에러 메시지 대신 원본 메시지 그대로 전달
+    return f"{student_name} 학생, {clean_comment}"
 
 # ---------------------------------------------------------
 # 4. 세션 상태 초기화
@@ -213,7 +206,7 @@ if not st.session_state.authenticated:
             df_eval = load_sheet_data(SPREADSHEET_NAME, EVAL_WORKSHEET)
             
             if df_eval.empty:
-                st.error("평가 시트 데이터를 불러오지 못했거나 데이터가 비어있습니다.")
+                st.error("평가 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.")
             else:
                 s_id = input_student_id.strip()
                 s_name = input_name.strip()
@@ -223,7 +216,7 @@ if not st.session_state.authenticated:
                 missing_cols = [c for c in required_cols if c not in df_eval.columns]
 
                 if missing_cols:
-                    st.error(f"시트에 다음 필수 열이 없습니다: {', '.join(missing_cols)}")
+                    st.error("시트 양식을 확인해주세요.")
                 else:
                     match_mask = (
                         (df_eval['학번'].astype(str).str.strip() == s_id) &
@@ -237,7 +230,7 @@ if not st.session_state.authenticated:
                         st.session_state.student_info = result_df.iloc[0].to_dict()
                         st.rerun()
                     else:
-                        st.error("입력하신 학번, 이름 또는 비밀번호가 일치하지 않습니다.")
+                        st.error("입력하신 정보가 일치하지 않습니다. 다시 확인해 주세요.")
 
 # ---------------------------------------------------------
 # 6. 인증 성공 후 화면
@@ -258,7 +251,7 @@ else:
 
     st.divider()
 
-    # --- Section A: 점수 레이더 차트 & 피드백 ---
+    # --- Section A: 점수 차트 & 선생님 피드백 ---
     col_chart, col_ai = st.columns([1, 1])
 
     with col_chart:
@@ -329,13 +322,12 @@ else:
             st.info("평가 점수 데이터가 존재하지 않습니다.")
 
     with col_ai:
-        st.subheader("💬 선생님의 피드백")
+        st.subheader("💌 선생님의 발표 피드백")
         teacher_comment = student.get('관찰 기록 및 교사 피드백', '')
         
-        with st.spinner("피드백을 정돈하는 중입니다..."):
-            ai_feedback = generate_growth_feedback(teacher_comment, student_name)
-        
-        st.info(ai_feedback)
+        # 피드백 다듬기 수행
+        final_feedback = format_feedback(teacher_comment, student_name)
+        st.info(final_feedback)
 
     st.divider()
 
@@ -357,7 +349,7 @@ else:
         if not good_point.strip() or not regret_point.strip() or not learned_point.strip() or not action_point.strip():
             st.warning("4가지 항목을 모두 작성한 후 제출해 주세요.")
         else:
-            with st.spinner("구글 시트에 소감을 저장하는 중입니다..."):
+            with st.spinner("소감을 제출하는 중입니다..."):
                 success = save_reflection(
                     student_id, 
                     student_name, 
