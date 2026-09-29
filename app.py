@@ -23,7 +23,7 @@ def get_gspread_client():
     return gc
 
 # 구글 시트 파일 ID 입력 (URL /d/ 와 /edit 사이의 문자열)
-SPREADSHEET_ID = "YOUR_SPREADSHEET_KEY" 
+SPREADSHEET_ID = "1NxN6L57-Lr3ee-5HVf0duexlxAy0R6TiVsawnRjB58s" 
 
 # 탭 이름 설정
 EVAL_TAB_NAME = "발표 채점 및 관찰기록표 V4"
