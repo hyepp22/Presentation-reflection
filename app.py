@@ -53,7 +53,6 @@ def load_sheet_data(spreadsheet_title, worksheet_title):
         ws = sh.worksheet(worksheet_title)
         data = ws.get_all_values()
     except Exception as e:
-        # <Response [200]> 예외가 발생하더라도 재시도하여 안전하게 데이터 수집
         try:
             sh = gc.open(spreadsheet_title)
             ws = sh.worksheet(worksheet_title)
@@ -65,7 +64,6 @@ def load_sheet_data(spreadsheet_title, worksheet_title):
     if not data or len(data) < 2:
         return pd.DataFrame()
 
-    # 첫 번째 행(헤더) 공백 제거 및 데이터프레임 생성
     headers = [str(h).strip() for h in data[0]]
     df = pd.DataFrame(data[1:], columns=headers)
     return df
@@ -101,11 +99,18 @@ def generate_growth_feedback(teacher_comment, student_name):
     - 학생 이름을 부르며 따뜻한 말투로 전달해 주세요.
     """
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # 모델명을 최신 표준 지원 모델로 지정 (오류 수정)
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"피드백 생성 중 오류 발생: {e}"
+        # 1.5-flash-latest 실패 시 gemini-2.5-flash 등 예비 모델 시도
+        try:
+            model = genai.GenerativeModel('gemini-2.5-flash')
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception:
+            return f"피드백 생성 중 오류 발생: {e}"
 
 # ---------------------------------------------------------
 # 4. 세션 상태 초기화
@@ -175,7 +180,6 @@ else:
     student_id = student.get('학번', '')
     student_name = student.get('이름', '')
 
-    # 상단 헤더 및 로그아웃 버튼
     col_head, col_logout = st.columns([4, 1])
     with col_head:
         st.success(f"🎉 환영합니다, **{student_id} {student_name}** 학생!")
@@ -187,13 +191,12 @@ else:
 
     st.divider()
 
-    # --- Section A: 점수 레이더 차트 & AI 피드백 ---
+    # --- Section A: 점수 레이더 차트 & 피드백 ---
     col_chart, col_ai = st.columns([1, 1])
 
     with col_chart:
         st.subheader("📊 항목별 발표 평가 점수")
         
-        # 구글 시트의 6개 점수 컬럼 및 최대 배점
         score_info = [
             ('맥락 및 구성(10점)', 10),
             ('매체 활용(10점)', 10),
@@ -234,10 +237,11 @@ else:
             st.info("평가 점수 데이터가 존재하지 않습니다.")
 
     with col_ai:
-        st.subheader("🤖 선생님의 AI 성장 피드백")
+        # [수정] 요청하신 문구로 변경
+        st.subheader("💬 선생님의 피드백")
         teacher_comment = student.get('관찰 기록 및 교사 피드백', '')
         
-        with st.spinner("AI가 피드백을 따뜻하게 가공 중입니다..."):
+        with st.spinner("피드백을 정돈하는 중입니다..."):
             ai_feedback = generate_growth_feedback(teacher_comment, student_name)
         
         st.info(ai_feedback)
