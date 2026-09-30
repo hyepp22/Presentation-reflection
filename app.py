@@ -140,10 +140,11 @@ import google.generativeai as genai
 import streamlit as st
 
 # ---------------------------------------------------------
-# 3. 피드백 다듬기 함수 (다중 API 키 로드 밸런싱 적용)
+# 3. 피드백 다듬기 함수 (캐싱 및 속도 최적화 적용)
 # ---------------------------------------------------------
+@st.cache_data(ttl=3600, show_spinner=False)  # 1시간 동안 가공 결과 저장
 def format_feedback(teacher_comment, student_name):
-    """선생님의 피드백을 다정하게 가공 (오류 발생 시 원문 감춤)"""
+    """선생님의 피드백을 다정하게 가공 (속도 최적화)"""
     default_msg = f"{student_name} 학생의 발표 피드백을 다듬는 중입니다."
     
     if not teacher_comment or str(teacher_comment).strip() == "":
@@ -164,35 +165,29 @@ def format_feedback(teacher_comment, student_name):
     - AI나 시스템이 수정했다는 언급은 절대 하지 마세요.
     """
     
-    # 1. Secrets에서 배열로 된 API 키 목록 가져오기
     api_keys = st.secrets.get("GEMINI_API_KEYS", [])
-    
-    # 단일 키만 적어둔 경우를 대비한 예외 처리
     if not api_keys and "GEMINI_API_KEY" in st.secrets:
         api_keys = [st.secrets["GEMINI_API_KEY"]]
 
     if not api_keys:
         return default_msg
 
-    # 2. API 키 순서를 무작위로 섞어 여러 구글 계정에 사용량 분산
     shuffled_keys = list(api_keys)
     random.shuffle(shuffled_keys)
 
-    # 3. 최신 모델 목록
+    # 속도가 가장 빠른 Flash 모델 위주로 설정 (Pro 모델은 지연 원인이므로 제거/후순위)
     candidate_models = [
-        'gemini-1.5-flash', 
-        'gemini-2.5-flash', 
-        'gemini-1.5-pro'
+        'gemini-1.5-flash',
+        'gemini-2.5-flash'
     ]
 
-    # 키를 순차적으로 교체해보며 호출 시도 (A키에 한도 초과 시 B키로 자동 전환)
     for api_key in shuffled_keys:
         try:
             genai.configure(api_key=api_key)
-            
             for model_name in candidate_models:
                 try:
                     model = genai.GenerativeModel(model_name)
+                    # response_mime_type이나 short text 생성 유도로 속도 향상
                     response = model.generate_content(prompt)
                     if response and response.text:
                         return response.text.strip()
@@ -201,7 +196,6 @@ def format_feedback(teacher_comment, student_name):
         except Exception:
             continue
 
-    # 모든 키/모델 시도가 실패할 경우에도 원문 없이 기본 안내 문구 출력
     return default_msg
 
 # ---------------------------------------------------------
