@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import gspread
 import plotly.graph_objects as go
-import google.generativeai as genai
 
 st.set_page_config(
     page_title="발표 결과 및 소감 작성",
@@ -11,14 +10,8 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# 1. Secrets 및 API 인증 설정
+# 1. GCP 구글 시트 연동 설정
 # ---------------------------------------------------------
-@st.cache_resource
-def init_gemini():
-    """Gemini API 설정"""
-    if "GEMINI_API_KEY" in st.secrets:
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-
 @st.cache_resource
 def get_gspread_client():
     """GCP 서비스 계정 인증 후 gspread 클라이언트 반환"""
@@ -26,11 +19,10 @@ def get_gspread_client():
         gcp_dict = dict(st.secrets["gcp_service_account"])
         gc = gspread.service_account_from_dict(gcp_dict)
         return gc
-    except Exception as e:
+    except Exception:
         st.error("구글 시트 연동 설정을 확인해주세요.")
         return None
 
-init_gemini()
 gc = get_gspread_client()
 
 # 구글 드라이브 파일명 및 워크시트(탭) 이름 설정
@@ -39,7 +31,7 @@ EVAL_WORKSHEET = "발표 채점 및 관찰기록표 V4"
 REFLECTION_WORKSHEET = "학생소감"
 
 # ---------------------------------------------------------
-# 이미지 기반 루브릭(채점 기준) 데이터 정의
+# 2. 이미지 기반 루브릭(채점 기준) 데이터 정의
 # ---------------------------------------------------------
 RUBRIC_DATA = {
     '맥락/구성': [
@@ -95,7 +87,7 @@ def get_rubric_description(item_name, score):
     return best_match if best_match else "채점 기준 정보가 없습니다."
 
 # ---------------------------------------------------------
-# 2. 구글 시트 데이터 로드 및 저장 함수
+# 3. 구글 시트 데이터 로드 및 저장 함수
 # ---------------------------------------------------------
 def load_sheet_data(spreadsheet_title, worksheet_title):
     """구글 시트 데이터 로드"""
@@ -134,69 +126,6 @@ def save_reflection(student_id, student_name, good_point, regret_point, learned_
         return True
     except Exception:
         return False
-
-import random
-import google.generativeai as genai
-import streamlit as st
-
-# ---------------------------------------------------------
-# 3. 피드백 다듬기 함수 (캐싱 및 속도 최적화 적용)
-# ---------------------------------------------------------
-@st.cache_data(ttl=3600, show_spinner=False)  # 1시간 동안 가공 결과 저장
-def format_feedback(teacher_comment, student_name):
-    """선생님의 피드백을 다정하게 가공 (속도 최적화)"""
-    default_msg = f"{student_name} 학생의 발표 피드백을 다듬는 중입니다."
-    
-    if not teacher_comment or str(teacher_comment).strip() == "":
-        return default_msg
-    
-    clean_comment = str(teacher_comment).strip()
-
-    prompt = f"""
-    당신은 따뜻하고 다정한 국어 교사입니다.
-    아래는 '{student_name}' 학생의 발표에 대한 선생님의 평가 메모입니다.
-    
-    [평가 메모]:
-    "{clean_comment}"
-    
-    위 메모를 바탕으로 학생의 성장을 격려할 수 있도록 우회적인 표현과 발전적 방향으로 다듬어 제시해주세요.
-    - {student_name} 학생의 이름을 부르며 따뜻한 말투로 존댓말을 사용하여 작성해 주세요.
-    - 잘한 점과 성장 포인트를 살려 3~4문장 이내로 작성해 주세요.
-    - AI나 시스템이 수정했다는 언급은 절대 하지 마세요.
-    """
-    
-    api_keys = st.secrets.get("GEMINI_API_KEYS", [])
-    if not api_keys and "GEMINI_API_KEY" in st.secrets:
-        api_keys = [st.secrets["GEMINI_API_KEY"]]
-
-    if not api_keys:
-        return default_msg
-
-    shuffled_keys = list(api_keys)
-    random.shuffle(shuffled_keys)
-
-    # 속도가 가장 빠른 Flash 모델 위주로 설정 (Pro 모델은 지연 원인이므로 제거/후순위)
-    candidate_models = [
-        'gemini-1.5-flash',
-        'gemini-2.5-flash'
-    ]
-
-    for api_key in shuffled_keys:
-        try:
-            genai.configure(api_key=api_key)
-            for model_name in candidate_models:
-                try:
-                    model = genai.GenerativeModel(model_name)
-                    # response_mime_type이나 short text 생성 유도로 속도 향상
-                    response = model.generate_content(prompt)
-                    if response and response.text:
-                        return response.text.strip()
-                except Exception:
-                    continue
-        except Exception:
-            continue
-
-    return default_msg
 
 # ---------------------------------------------------------
 # 4. 세션 상태 초기화
@@ -294,8 +223,8 @@ else:
         ]
         
         chart_categories = []
-        percentages = []     # 차트 표현용 (달성률 %)
-        hover_texts = []     # 마우스 올렸을 때 보여줄 실제 점수 텍스트
+        percentages = []
+        hover_texts = []
         score_details = []
 
         for full_col, max_val, short_name in score_info:
@@ -305,7 +234,6 @@ else:
                 except ValueError:
                     val = 0.0
                 
-                # 달성률(%) 계산 (만점 대비 비율)
                 pct = (val / max_val) * 100 if max_val > 0 else 0
                 
                 chart_categories.append(f"{short_name}<br>({max_val}점 만점)")
@@ -316,7 +244,6 @@ else:
         if percentages:
             fig = go.Figure()
 
-            # 레이더 차트에 백분율(%)로 배치하고 hovertext에 실제 점수 표현
             fig.add_trace(go.Scatterpolar(
                 r=percentages + [percentages[0]],
                 theta=chart_categories + [chart_categories[0]],
@@ -331,7 +258,7 @@ else:
                 polar=dict(
                     radialaxis=dict(
                         visible=True,
-                        range=[0, 100],            # 축을 0% ~ 100%로 설정하여 만점 시 외곽에 닿게 함
+                        range=[0, 100],
                         tickvals=[0, 25, 50, 75, 100],
                         ticktext=['0%', '25%', '50%', '75%', '100%']
                     )
@@ -344,7 +271,6 @@ else:
             
             st.metric(label="🏆 최종 총점", value=f"{student.get('최종 총점(100점)', '-')} / 100 점")
             
-            # --- 세부 항목별 점수 및 루브릭(채점 기준) 조회 영역 ---
             st.markdown("**📌 세부 항목별 점수 및 채점 기준**")
             
             for s_name, val, max_val in score_details:
@@ -358,12 +284,14 @@ else:
 
     with col_ai:
         st.subheader("💌 선생님의 발표 피드백")
-        teacher_comment = student.get('관찰 기록 및 교사 피드백', '')
         
-        # 피드백 다듬기 수행
-        final_feedback = format_feedback(teacher_comment, student_name)
-        st.info(final_feedback)
-    
+        # O열 헤더 이름 '종합피드백' (또는 '종합 피드백')으로 읽어옴
+        feedback_text = student.get('종합피드백', '') or student.get('종합 피드백', '')
+        
+        if feedback_text and str(feedback_text).strip() != "":
+            st.info(str(feedback_text).strip())
+        else:
+            st.info(f"{student_name} 학생의 발표 피드백을 작성 중입니다.")
 
     st.divider()
 
