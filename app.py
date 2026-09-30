@@ -149,7 +149,7 @@ def format_feedback(teacher_comment, student_name):
     if not teacher_comment or str(teacher_comment).strip() == "":
         return default_msg
     
-    clean_comment = str(teacher_comment).strip())
+    clean_comment = str(teacher_comment).strip()
 
     prompt = f"""
     당신은 따뜻하고 다정한 국어 교사입니다.
